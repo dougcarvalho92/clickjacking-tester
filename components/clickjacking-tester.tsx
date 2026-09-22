@@ -59,18 +59,25 @@ export default function ClickjackingTester() {
           try {
             const doc =
               iframe.contentDocument ?? iframe.contentWindow?.document;
-            if (!doc || !doc.body || doc.body.innerHTML.trim() === "") {
+            const hasBodyContent =
+              !!doc?.body && doc.body.innerHTML.trim() !== "";
+
+            if (hasBodyContent) {
               settle(
-                "blocked",
-                "Browser bloqueou o frame ou não disponibilizou conteúdo.",
+                "vulnerable",
+                "Vulnerável: conteúdo carregou e ficou acessível no iframe.",
               );
-            } else {
-              settle("vulnerable", "Conteúdo carregado e acessível no iframe.");
+              return;
             }
+
+            settle(
+              "blocked",
+              "Protegido: o navegador bloqueou o frame ou não disponibilizou conteúdo.",
+            );
           } catch {
             settle(
               "blocked",
-              "Frame cross-origin carregou, mas o conteúdo não pôde ser inspecionado; sem evidência conclusiva de vulnerabilidade.",
+              "Protegido: a conexão foi recusada pelo navegador e não há evidência de vulnerabilidade.",
             );
           }
         };
@@ -84,16 +91,25 @@ export default function ClickjackingTester() {
             try {
               const doc =
                 iframe.contentDocument ?? iframe.contentWindow?.document;
+              const hasBodyContent =
+                !!doc?.body && doc.body.innerHTML.trim() !== "";
+
+              if (hasBodyContent) {
+                settle(
+                  "vulnerable",
+                  "Vulnerável: conteúdo detectado no iframe após timeout.",
+                );
+                return;
+              }
+
               settle(
-                doc?.body?.innerHTML.trim() ? "vulnerable" : "blocked",
-                doc?.body?.innerHTML.trim()
-                  ? "Conteúdo detectado após timeout."
-                  : "Sem conteúdo detectado após timeout.",
+                "blocked",
+                "Protegido: sem conteúdo detectado após timeout e o navegador recusou a carga.",
               );
             } catch {
               settle(
                 "blocked",
-                "Frame cross-origin após timeout; conteúdo não inspecionável e sem evidência de vulnerabilidade.",
+                "Protegido: a conexão foi recusada pelo navegador e não há evidência de vulnerabilidade.",
               );
             }
           }
