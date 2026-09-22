@@ -215,6 +215,18 @@ export default function ClickjackingTester() {
 
     clone.classList.add("report-exporting");
     clone.removeAttribute("id");
+    clone.style.position = "fixed";
+    clone.style.left = "0";
+    clone.style.top = "0";
+    clone.style.width = "780px";
+    clone.style.maxWidth = "780px";
+    clone.style.zIndex = "2147483647";
+    clone.style.background = "#ffffff";
+    clone.style.color = "#111111";
+    clone.style.opacity = "1";
+    clone.style.visibility = "visible";
+    clone.style.pointerEvents = "none";
+    clone.style.display = "block";
     document.body.appendChild(clone);
 
     return {
@@ -230,28 +242,77 @@ export default function ClickjackingTester() {
     const { element, cleanup } = createExportClone();
 
     try {
-      const html2pdf = (await import("html2pdf.js")).default;
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
 
-      await html2pdf()
-        .set({
-          margin: [10, 10, 10, 10],
-          filename: `clickjacking-report-${Date.now()}.pdf`,
-          image: { type: "jpeg", quality: 0.95 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-          },
-          jsPDF: {
-            unit: "mm",
-            format: "a4",
-            orientation: "portrait",
-          },
-          pagebreak: { mode: ["css", "legacy"] },
-        })
-        .from(element)
-        .save();
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({
+        unit: "mm",
+        format: "a4",
+        orientation: "portrait",
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const imgWidth = pageWidth - margin * 2;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let cursorY = margin;
+      const usableHeight = pageHeight - margin * 2;
+      const totalPages = Math.ceil(imgHeight / usableHeight);
+
+      for (let page = 0; page < totalPages; page += 1) {
+        if (page > 0) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        const sourceY = page * usableHeight * (canvas.height / imgHeight);
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = Math.min(
+          canvas.height - sourceY,
+          (usableHeight * canvas.width) / imgWidth,
+        );
+
+        const ctx = pageCanvas.getContext("2d");
+        if (!ctx)
+          throw new Error("Não foi possível preparar o conteúdo do PDF.");
+
+        ctx.drawImage(
+          canvas,
+          0,
+          sourceY,
+          canvas.width,
+          pageCanvas.height,
+          0,
+          0,
+          canvas.width,
+          pageCanvas.height,
+        );
+
+        const pageImage = pageCanvas.toDataURL("image/png");
+        pdf.addImage(
+          pageImage,
+          "PNG",
+          margin,
+          cursorY,
+          imgWidth,
+          Math.min(usableHeight, imgHeight),
+        );
+      }
+
+      pdf.save(`clickjacking-report-${Date.now()}.pdf`);
     } catch (error) {
       console.error("Erro ao exportar PDF:", error);
       alert(
