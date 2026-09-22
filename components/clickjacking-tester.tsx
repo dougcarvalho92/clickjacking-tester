@@ -346,7 +346,7 @@ export default function ClickjackingTester() {
               value={targetUrl}
               onChange={(event) => setTargetUrl(event.target.value)}
               onKeyDown={(event) => event.key === "Enter" && startTests()}
-              placeholder="https://github.com/dougcarvalho92/clickjacking-tester"
+              placeholder="https://exemplo.com/sua-aplicacao"
               autoComplete="off"
               spellCheck={false}
             />
@@ -367,12 +367,14 @@ export default function ClickjackingTester() {
         <section className="notice">
           <strong>Ambiente de Teste de Segurança.</strong> Os iframes abaixo
           tentam incorporar a URL informada. Use sempre uma URL pública e
-          acessível pela internet, por exemplo:{" "}
-          <code>https://github.com/dougcarvalho92/clickjacking-tester</code>. Se
-          o servidor retornar <code>X-Frame-Options: DENY/SAMEORIGIN</code> ou
-          CSP <code>frame-ancestors</code>, o carregamento poderá ser bloqueado
-          pelo browser. A detecção por iframe é uma indicação prática e não
-          substitui a inspeção dos headers HTTP.
+          acessível pela internet. Para exemplo de referência pública, você pode
+          testar manualmente o repositório{" "}
+          <code>https://github.com/dougcarvalho92/clickjacking-tester</code> no
+          campo acima. Se o servidor retornar{" "}
+          <code>X-Frame-Options: DENY/SAMEORIGIN </code>
+          ou CSP <code>frame-ancestors</code>, o carregamento poderá ser
+          bloqueado pelo browser. A detecção por iframe é uma indicação prática
+          e não substitui a inspeção dos headers HTTP.
         </section>
 
         <section className="info-grid">
