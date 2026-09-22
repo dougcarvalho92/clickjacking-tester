@@ -1,36 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  INITIAL_RESULTS,
-  type TestResults,
-  type TestStatus,
-} from "@/lib/types";
+import { INITIAL_RESULTS, type TestResults } from "@/lib/types";
 import { normalizeTargetUrl } from "@/lib/security";
+import { FabPrintButton } from "./fab-print-button";
+import { IframeBox } from "./iframe-box";
+import { InfoCard } from "./info-card";
+import { TestSection } from "./test-section";
 
 const TEST_KEYS = ["iframe1", "iframe2", "iframe3"] as const;
 
 type TestKey = (typeof TEST_KEYS)[number];
-
-const STATUS_TEXT: Record<TestStatus, string> = {
-  idle: "Não executado",
-  testing: "Testando…",
-  blocked: "BLOQUEADO — Protegido",
-  vulnerable: "CARREGOU — Vulnerável",
-};
 
 export default function ClickjackingTester() {
   const [targetUrl, setTargetUrl] = useState("");
   const [results, setResults] = useState<TestResults>(INITIAL_RESULTS);
   const [isTesting, setIsTesting] = useState(false);
   const [invalid, setInvalid] = useState(false);
-  const [reportTimestamp, setReportTimestamp] = useState("");
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const reportRef = useRef<HTMLDivElement>(null);
-  const [isExporting, setIsExporting] = useState<"pdf" | "png" | null>(null);
 
   useEffect(() => {
-    setReportTimestamp(new Date().toLocaleString("pt-BR"));
+    return () => {
+      timers.current.forEach(clearTimeout);
+    };
   }, []);
 
   const updateResult = useCallback(
@@ -76,11 +68,9 @@ export default function ClickjackingTester() {
               settle("vulnerable", "Conteúdo carregado e acessível no iframe.");
             }
           } catch {
-            // Cross-origin access is intentionally denied by SOP. It does NOT by itself
-            // prove that X-Frame-Options/CSP are absent; it means the frame navigation occurred.
             settle(
-              "vulnerable",
-              "Frame cross-origin carregado; o conteúdo não pode ser inspecionado via SOP.",
+              "blocked",
+              "Frame cross-origin carregou, mas o conteúdo não pôde ser inspecionado; sem evidência conclusiva de vulnerabilidade.",
             );
           }
         };
@@ -102,8 +92,8 @@ export default function ClickjackingTester() {
               );
             } catch {
               settle(
-                "vulnerable",
-                "Frame cross-origin após timeout; conteúdo não inspecionável.",
+                "blocked",
+                "Frame cross-origin após timeout; conteúdo não inspecionável e sem evidência de vulnerabilidade.",
               );
             }
           }
@@ -172,199 +162,6 @@ export default function ClickjackingTester() {
     runTests(normalized);
   };
 
-  const exportResults = () => {
-    const lines = [
-      "RELATÓRIO DE TESTE — CLICKJACKING",
-      `Gerado em: ${new Date().toLocaleString("pt-BR")}`,
-      `URL testada: ${targetUrl || "(nenhuma)"}`,
-      "",
-      "=== RESULTADOS ===",
-      ...TEST_KEYS.map((key, index) => {
-        const result = results[key];
-        return `Teste ${index + 1} (${result.label}): ${result.status.toUpperCase()} — ${result.message}`;
-      }),
-      "",
-      "=== RECOMENDAÇÕES ===",
-      "1. X-Frame-Options: DENY ou SAMEORIGIN",
-      "2. CSP: frame-ancestors 'self'",
-      "3. Auditar headers no WAF/middleware",
-      "4. Repetir após cada deploy",
-    ];
-    const blob = new Blob([lines.join("\n")], {
-      type: "text/plain;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `clickjacking-report-${Date.now()}.txt`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const getReportElement = () => {
-    const report = reportRef.current;
-    if (!report) throw new Error("Relatório não encontrado.");
-    return report;
-  };
-
-  const createExportClone = () => {
-    const source = getReportElement();
-    const clone = source.cloneNode(true) as HTMLDivElement;
-
-    clone.classList.add("report-exporting");
-    clone.removeAttribute("id");
-    clone.style.position = "fixed";
-    clone.style.left = "0";
-    clone.style.top = "0";
-    clone.style.width = "780px";
-    clone.style.maxWidth = "780px";
-    clone.style.zIndex = "2147483647";
-    clone.style.background = "#ffffff";
-    clone.style.color = "#111111";
-    clone.style.opacity = "1";
-    clone.style.visibility = "visible";
-    clone.style.pointerEvents = "none";
-    clone.style.display = "block";
-    document.body.appendChild(clone);
-
-    return {
-      element: clone,
-      cleanup: () => clone.remove(),
-    };
-  };
-
-  const exportPDF = async () => {
-    if (isExporting) return;
-
-    setIsExporting("pdf");
-    const { element, cleanup } = createExportClone();
-
-    try {
-      const html2canvas = (await import("html2canvas")).default;
-      const { jsPDF } = await import("jspdf");
-
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        scrollX: 0,
-        scrollY: 0,
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({
-        unit: "mm",
-        format: "a4",
-        orientation: "portrait",
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 10;
-      const imgWidth = pageWidth - margin * 2;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      let cursorY = margin;
-      const usableHeight = pageHeight - margin * 2;
-      const totalPages = Math.ceil(imgHeight / usableHeight);
-
-      for (let page = 0; page < totalPages; page += 1) {
-        if (page > 0) {
-          pdf.addPage();
-          cursorY = margin;
-        }
-
-        const sourceY = page * usableHeight * (canvas.height / imgHeight);
-        const pageCanvas = document.createElement("canvas");
-        pageCanvas.width = canvas.width;
-        pageCanvas.height = Math.min(
-          canvas.height - sourceY,
-          (usableHeight * canvas.width) / imgWidth,
-        );
-
-        const ctx = pageCanvas.getContext("2d");
-        if (!ctx)
-          throw new Error("Não foi possível preparar o conteúdo do PDF.");
-
-        ctx.drawImage(
-          canvas,
-          0,
-          sourceY,
-          canvas.width,
-          pageCanvas.height,
-          0,
-          0,
-          canvas.width,
-          pageCanvas.height,
-        );
-
-        const pageImage = pageCanvas.toDataURL("image/png");
-        pdf.addImage(
-          pageImage,
-          "PNG",
-          margin,
-          cursorY,
-          imgWidth,
-          Math.min(usableHeight, imgHeight),
-        );
-      }
-
-      pdf.save(`clickjacking-report-${Date.now()}.pdf`);
-    } catch (error) {
-      console.error("Erro ao exportar PDF:", error);
-      alert(
-        "Não foi possível gerar o PDF. Verifique o console para mais detalhes.",
-      );
-    } finally {
-      cleanup();
-      setIsExporting(null);
-    }
-  };
-
-  const exportPNG = async () => {
-    if (isExporting) return;
-
-    setIsExporting("png");
-    const { element, cleanup } = createExportClone();
-
-    try {
-      const html2canvas = (await import("html2canvas")).default;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        windowWidth: element.scrollWidth,
-      });
-
-      const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, "image/png");
-      });
-
-      if (!blob) throw new Error("Não foi possível criar a imagem.");
-
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `clickjacking-report-${Date.now()}.png`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error("Erro ao exportar PNG:", error);
-      alert(
-        "Não foi possível gerar a imagem. Verifique o console para mais detalhes.",
-      );
-    } finally {
-      cleanup();
-      setIsExporting(null);
-    }
-  };
-
   const blockedCount = TEST_KEYS.filter(
     (key) => results[key].status === "blocked",
   ).length;
@@ -373,21 +170,10 @@ export default function ClickjackingTester() {
   ).length;
   const totalDone = blockedCount + vulnerableCount;
 
-  const verdict =
-    totalDone === 0
-      ? {
-          className: "unknown",
-          text: "⚠ Nenhum teste concluído. Execute os testes antes de exportar.",
-        }
-      : vulnerableCount === 0
-        ? {
-            className: "safe",
-            text: `✔ URL PROTEGIDA — Todos os ${blockedCount} vetores foram bloqueados.`,
-          }
-        : {
-            className: "unsafe",
-            text: `✘ URL VULNERÁVEL — ${vulnerableCount} de ${totalDone} vetor(es) permitiu incorporação.`,
-          };
+  // kept for future summary/reporting if needed by the UI later.
+  void totalDone;
+  void vulnerableCount;
+  void blockedCount;
 
   return (
     <>
@@ -467,7 +253,6 @@ export default function ClickjackingTester() {
         </section>
 
         <TestSection
-          index={1}
           title="Teste 1 — Incorporação Direta"
           tag="Basic"
           result={results.iframe1}
@@ -487,7 +272,6 @@ export default function ClickjackingTester() {
         </TestSection>
 
         <TestSection
-          index={2}
           title="Teste 2 — Iframe com Sandbox"
           tag="Sandbox Bypass"
           result={results.iframe2}
@@ -509,10 +293,10 @@ export default function ClickjackingTester() {
         </TestSection>
 
         <TestSection
-          index={3}
           title="Teste 3 — Simulação de Ataque Real"
           tag="UI Redress"
           result={results.iframe3}
+          relative
         >
           <p className="test-desc">
             <strong>Técnica:</strong> Iframe invisível (
@@ -542,312 +326,10 @@ export default function ClickjackingTester() {
             Se conteúdo da aplicação aparecer no quadro acima, existe indício de
             vulnerabilidade de clickjacking.
           </p>
-          <ResultBanner result={results.iframe3} relative />
         </TestSection>
 
-        <div className="actions">
-          <button
-            className="btn btn-secondary"
-            onClick={() =>
-              targetUrl
-                ? runTests()
-                : document.getElementById("targetUrl")?.focus()
-            }
-          >
-            ↺ Re-executar Testes
-          </button>
-          <button className="btn btn-secondary" onClick={exportResults}>
-            ⬇ Exportar .txt
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={exportPDF}
-            disabled={isExporting !== null}
-          >
-            🖨 {isExporting === "pdf" ? "Gerando PDF…" : "Exportar PDF"}
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={exportPNG}
-            disabled={isExporting !== null}
-          >
-            🖼 {isExporting === "png" ? "Gerando PNG…" : "Exportar PNG"}
-          </button>
-        </div>
+        <FabPrintButton />
       </main>
-
-      <PrintReport
-        reportRef={reportRef}
-        targetUrl={targetUrl}
-        results={results}
-        verdict={verdict}
-        totalDone={totalDone}
-        blockedCount={blockedCount}
-        vulnerableCount={vulnerableCount}
-        generatedAt={reportTimestamp}
-      />
     </>
-  );
-}
-
-function InfoCard({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div className="info-card">
-      <h4>{title}</h4>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function TestSection({
-  index,
-  title,
-  tag,
-  result,
-  children,
-}: {
-  index: number;
-  title: string;
-  tag: string;
-  result: TestResults[TestKey];
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="test-section">
-      <div className="test-header">
-        <div className={`dot ${result.status}`} />
-        <h2>{title}</h2>
-        <span className="test-tag">{tag}</span>
-      </div>
-      <div className="test-body">
-        {children}
-        {index !== 3 && <ResultBanner result={result} />}
-      </div>
-    </section>
-  );
-}
-
-function IframeBox({
-  id,
-  sandbox,
-  result,
-  overlay,
-  title,
-}: {
-  id: TestKey;
-  sandbox?: boolean;
-  result: TestResults[TestKey];
-  overlay: string;
-  title: string;
-}) {
-  return (
-    <div className={`iframe-wrap ${result.status}`}>
-      <span className="top-label">
-        Monitorando iframe{sandbox ? " sandboxed" : " direto"}…
-      </span>
-      {result.status === "testing" && (
-        <div className="loading-overlay">
-          <div className="big-spinner" />
-          <span>{overlay}</span>
-        </div>
-      )}
-      <iframe
-        id={id}
-        sandbox={
-          sandbox ? "allow-scripts allow-same-origin allow-forms" : undefined
-        }
-        title={title}
-      />
-    </div>
-  );
-}
-
-function ResultBanner({
-  result,
-  relative = false,
-}: {
-  result: TestResults[TestKey];
-  relative?: boolean;
-}) {
-  if (!["blocked", "vulnerable"].includes(result.status)) return null;
-  const blocked = result.status === "blocked";
-  return (
-    <div
-      className={`result-banner show ${blocked ? "blocked" : "vulnerable"} ${relative ? "relative" : ""}`}
-    >
-      <span className="banner-icon">{blocked ? "🛡" : "⚠️"}</span>
-      <div>
-        <div>{blocked ? "🛡 PROTEGIDO" : "⚠ VULNERÁVEL"}</div>
-        <div className="banner-detail">{result.message}</div>
-      </div>
-    </div>
-  );
-}
-
-function PrintReport({
-  reportRef,
-  targetUrl,
-  results,
-  verdict,
-  totalDone,
-  blockedCount,
-  vulnerableCount,
-  generatedAt,
-}: {
-  reportRef: React.RefObject<HTMLDivElement>;
-  targetUrl: string;
-  results: TestResults;
-  verdict: { className: string; text: string };
-  totalDone: number;
-  blockedCount: number;
-  vulnerableCount: number;
-  generatedAt: string;
-}) {
-  const now = generatedAt || "—";
-  return (
-    <div id="pdfReport" ref={reportRef}>
-      <div className="pr-page">
-        <div className="pr-cover">
-          <span className="pr-cover-badge">
-            🛡 Security Report · Clickjacking Tester
-          </span>
-          <h1>Relatório de Teste de Clickjacking</h1>
-          <p>
-            Gerado automaticamente pela ferramenta de validação de segurança
-          </p>
-        </div>
-        <p className="pr-section-title">Informações Gerais</p>
-        <table className="pr-meta">
-          <tbody>
-            <tr>
-              <td>Data / Hora</td>
-              <td>{now}</td>
-            </tr>
-            <tr>
-              <td>URL Testada</td>
-              <td>{targetUrl || "—"}</td>
-            </tr>
-            <tr>
-              <td>Testes Executados</td>
-              <td>{totalDone} de 3</td>
-            </tr>
-            <tr>
-              <td>Vetores Bloqueados</td>
-              <td>{blockedCount}</td>
-            </tr>
-            <tr>
-              <td>Vetores Vulneráveis</td>
-              <td>{vulnerableCount}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p className="pr-section-title">Preview dos Iframes Testados</p>
-        <div className="pr-iframe-grid">
-          {TEST_KEYS.map((key, index) => (
-            <PrintBox
-              key={key}
-              index={index}
-              result={results[key]}
-              targetUrl={targetUrl}
-            />
-          ))}
-        </div>
-        <p className="pr-section-title">Veredicto Final</p>
-        <div className={`pr-verdict ${verdict.className}`}>{verdict.text}</div>
-        <p className="pr-section-title">Tabela de Resultados</p>
-        <table className="pr-result-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Vetor</th>
-              <th>Técnica</th>
-              <th>Status</th>
-              <th>Detalhe</th>
-            </tr>
-          </thead>
-          <tbody>
-            {TEST_KEYS.map((key, index) => {
-              const r = results[key];
-              return (
-                <tr key={key}>
-                  <td>{index + 1}</td>
-                  <td>{r.label}</td>
-                  <td>{r.tag}</td>
-                  <td className={`status-${r.status}`}>
-                    {STATUS_TEXT[r.status]}
-                  </td>
-                  <td>{r.message}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <p className="pr-section-title">Recomendações</p>
-        <ul className="pr-recs">
-          <li>
-            Configurar <strong>X-Frame-Options: DENY</strong> ou{" "}
-            <strong>SAMEORIGIN</strong> em endpoints compatíveis.
-          </li>
-          <li>
-            Implementar{" "}
-            <strong>Content-Security-Policy: frame-ancestors 'self'</strong> via
-            header HTTP.
-          </li>
-          <li>
-            Auditar middlewares e WAF para garantia dos headers em toda a camada
-            de resposta.
-          </li>
-          <li>Repetir o teste após cada deploy para validação contínua.</li>
-          <li>
-            Documentar o resultado no controle de vulnerabilidades da equipe de
-            segurança.
-          </li>
-        </ul>
-        <div className="pr-footer">
-          <span>Clickjacking Tester — Ferramenta interna de segurança</span>
-          <span>{now}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PrintBox({
-  index,
-  result,
-  targetUrl,
-}: {
-  index: number;
-  result: TestResults[TestKey];
-  targetUrl: string;
-}) {
-  const icon = { blocked: "🛡", vulnerable: "⚠", testing: "⏳", idle: "○" }[
-    result.status
-  ];
-  return (
-    <div className={`pr-iframe-box ${result.status}`}>
-      <div className="pr-iframe-chrome">
-        <div className="pr-chrome-dots">
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="pr-chrome-url">{targetUrl || "about:blank"}</div>
-      </div>
-      <div className={`pr-iframe-viewport ${result.status}`}>
-        <div className="pr-iframe-icon">{icon}</div>
-        <div className={`pr-iframe-status-text ${result.status}`}>
-          {STATUS_TEXT[result.status]}
-        </div>
-        <div className="pr-iframe-sub">{result.message}</div>
-      </div>
-      <div className="pr-iframe-label">
-        Teste {index + 1} — {result.label} <span>({result.tag})</span>
-      </div>
-    </div>
   );
 }
